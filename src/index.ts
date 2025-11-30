@@ -8,6 +8,13 @@ const prompt = promptSync();
 // Aca se guardan las tareas: "tareas.json".
 const RUTA_ARCHIVO = "tareas.json";
 
+//estructura de datos para el resultado de las estadísticas
+interface Estadisticas {
+  totalVisibles: number;
+  porEstado: { [key: string]: { cantidad: number; porcentaje: string } };
+  porDificultad: { [key: string]: { cantidad: number; porcentaje: string } };
+}
+
 // Las tareas van a ser asi:
 interface Tarea {
 
@@ -89,6 +96,107 @@ function generarId(listaTareas: Tarea[]): number {
   return maxId + 1;  // El nuevo ID será el ID más grande encontrado más 1.
 }
 
+// Ordena la lista de tareas y devuelve una *nueva* lista ordenada, sin modificar la original.
+function ordenarTareasPura(listaTareas: Tarea[], criterio: string): Tarea[] {
+  // Creamos una copia de la lista para no modificar el array original (principio de pureza).
+  const copiaTareas = [...listaTareas];
+
+  // La función .sort() ordena el array en su lugar, por eso trabajamos con una copia.
+  copiaTareas.sort(function (a, b) {
+    let comparacion = 0;
+
+    switch (criterio.toLowerCase()) {
+      case "titulo":
+        // Para ordenar cadenas (strings), usamos localeCompare.
+        comparacion = a.titulo.localeCompare(b.titulo);
+        break;
+
+      case "vencimiento":
+      case "creacion":
+        // Convertimos las fechas (strings) a objetos Date para ordenarlas cronológicamente.
+        const fechaA = new Date(criterio === "vencimiento" ? a.fechaVencimiento : a.fechaCreacion).getTime();
+        const fechaB = new Date(criterio === "vencimiento" ? b.fechaVencimiento : b.fechaCreacion).getTime();
+        // A - B para orden ascendente (más antigua a más nueva).
+        comparacion = fechaA - fechaB;
+        break;
+
+      case "dificultad":
+        // Asignamos un valor numérico para ordenar la dificultad: fácil < medio < difícil.
+        const ordenDificultad: { [key: string]: number } = {
+          fácil: 1,
+          medio: 2,
+          difícil: 3,
+        };
+        const dificultadA = ordenDificultad[a.dificultad.toLowerCase()] || 4; // Valor 4 para manejar casos inesperados.
+        const dificultadB = ordenDificultad[b.dificultad.toLowerCase()] || 4;
+        comparacion = dificultadA - dificultadB;
+        break;
+
+      default:
+        break;
+    }
+
+    return comparacion;
+  });
+
+  return copiaTareas;
+}
+
+// Esta función pura calcula el total de tareas, su distribución por estado y por dificultad.
+function obtenerEstadisticasPura(listaTareas: Tarea[]): Estadisticas {
+  const visibles = obtenerTareasVisibles(listaTareas); // Usamos la función pura existente para filtrar
+  const total = visibles.length;
+
+  // Definimos las categorías que queremos contar
+  const estadosBase: { [key: string]: { cantidad: number; porcentaje: string } } = {
+    'Pendiente': { cantidad: 0, porcentaje: "0.00%" },
+    'En curso': { cantidad: 0, porcentaje: "0.00%" },
+    'Terminada': { cantidad: 0, porcentaje: "0.00%" }
+  };
+  
+  const dificultadesBase: { [key: string]: { cantidad: number; porcentaje: string } } = {
+    'fácil': { cantidad: 0, porcentaje: "0.00%" },
+    'medio': { cantidad: 0, porcentaje: "0.00%" },
+    'difícil': { cantidad: 0, porcentaje: "0.00%" }
+  };
+
+  // Función auxiliar para calcular el porcentaje
+  function calcularPorcentaje(count: number, total: number): string {
+    if (total === 0) return "0.00%";
+    return ((count / total) * 100).toFixed(2) + "%";
+  }
+  
+  // Recorrer la lista visible para contar
+  visibles.forEach(tarea => {
+    // Contar por Estado (normalizamos para evitar problemas de mayúsculas/minúsculas)
+    const estadoKey = tarea.estado.charAt(0).toUpperCase() + tarea.estado.slice(1).toLowerCase();
+    if (estadosBase.hasOwnProperty(estadoKey)) {
+      estadosBase[estadoKey].cantidad++;
+    }
+
+    // Contar por Dificultad
+    const dificultadKey = tarea.dificultad.toLowerCase();
+    if (dificultadesBase.hasOwnProperty(dificultadKey)) {
+      dificultadesBase[dificultadKey].cantidad++;
+    }
+  });
+
+  // Calcular y asignar porcentajes
+  for (const estado in estadosBase) {
+    estadosBase[estado].porcentaje = calcularPorcentaje(estadosBase[estado].cantidad, total);
+  }
+  for (const dificultad in dificultadesBase) {
+    dificultadesBase[dificultad].porcentaje = calcularPorcentaje(dificultadesBase[dificultad].cantidad, total);
+  }
+  
+  // Devolver el objeto de estadísticas final
+  return {
+    totalVisibles: total,
+    porEstado: estadosBase,
+    porDificultad: dificultadesBase
+  };
+}
+
 // Crea un nuevo objeto Tarea con todos los datos y lo devuelve.
 function crearTareaPura(
   id: number,
@@ -141,6 +249,62 @@ function obtenerTareasVisibles(listaTareas: Tarea[]): Tarea[] {
   });
 }
 
+// Devuelve una lista de tareas visibles cuya fecha de vencimiento ya pasó.
+function obtenerTareasVencidas(listaTareas: Tarea[]): Tarea[] {
+  const visibles = obtenerTareasVisibles(listaTareas); // Solo examinamos las que no están eliminadas.
+  const hoy = new Date(); // Obtenemos la fecha de hoy.
+  hoy.setHours(0, 0, 0, 0); // Establecemos la hora a medianoche para solo comparar el día.
+
+  return visibles.filter(function (t) {
+    // Si no tiene fecha de vencimiento, no está vencida.
+    if (!t.fechaVencimiento) {
+      return false;
+    }
+    // Creamos un objeto Date con la fecha de vencimiento.
+    const fechaVencimiento = new Date(t.fechaVencimiento);
+    fechaVencimiento.setHours(0, 0, 0, 0);
+    
+    // Una tarea está vencida si su fecha de vencimiento es anterior a hoy.
+    return fechaVencimiento.getTime() < hoy.getTime();
+  });
+}
+
+// Devuelve una lista de tareas visibles marcadas como 'difícil'.
+function obtenerTareasPrioridadAlta(listaTareas: Tarea[]): Tarea[] {
+  const visibles = obtenerTareasVisibles(listaTareas);
+  return visibles.filter(function (t) {
+    // Filtramos por dificultad 'difícil' (o 'dificil' si el usuario se equivocó).
+    const dificultad = t.dificultad.toLowerCase();
+    return dificultad === "difícil" || dificultad === "dificil"; 
+  });
+}
+
+// Devuelve una lista de tareas visibles relacionadas (con texto coincidente) a una tarea específica.
+function obtenerTareasRelacionadas(listaTareas: Tarea[], tareaBaseId: number): Tarea[] {
+  const visibles = obtenerTareasVisibles(listaTareas);
+  const tareaBase = visibles.find(t => t.id === tareaBaseId); // Encontramos la tarea de referencia.
+
+  if (!tareaBase) {
+    return []; // Si la tarea base no existe, devolvemos una lista vacía.
+  }
+
+  // Usamos el título como término de búsqueda clave.
+  const terminoBusqueda = tareaBase.titulo.toLowerCase();
+
+  return visibles.filter(function (t) {
+    // Excluimos la tarea base de los resultados.
+    if (t.id === tareaBaseId) {
+      return false;
+    }
+
+    // Comprobamos si el título o la descripción de la otra tarea incluye el término clave.
+    return (
+      t.titulo.toLowerCase().includes(terminoBusqueda) ||
+      t.descripcion.toLowerCase().includes(terminoBusqueda)
+    );
+  });
+}
+
 
 // --- EL MENÚ PRINCIPAL DEL PROGRAMA (ES IMPURA, porque interactúa con el usuario) ---
 
@@ -157,6 +321,9 @@ do {
   console.log("4.Ver Detalles de Tareas");
   console.log("5.Salir");
   console.log("6.Eliminar tarea\n");
+  console.log("7.Ordenar Tareas\n")
+  console.log("8.Ver Estadísticas\n");
+  console.log("9.Consultas/Inferencia\n");
 
   // Pide al usuario que elija una opción.
   opcion = prompt("Elige una opción: ") || "";
@@ -243,10 +410,23 @@ do {
       prompt("\nPresiona Enter para continuar...");
       break;
 
+      case "7":
+      ordenarTareas(); //Se llama a la función ordenar tareas.
+      break;
+
+      case "8":
+      mostrarEstadisticas();
+      break;
+
+      case "9":
+      mostrarConsultas();
+      break;
+
     default:
       console.log("Opción no válida. Intenta de nuevo."); // Si el usuario pone una opción que no existe.
       prompt("Presiona Enter para continuar...");
       break;
+
   }
 } while (opcion !== "5"); // El bucle se repite mientras la opción no sea "5".
 
@@ -433,6 +613,173 @@ function buscarTarea(): void {
       console.log("Dificultad: " + tareaActual.dificultad);
       console.log("Fecha de Creación: " + tareaActual.fechaCreacion);
       console.log("Fecha de Vencimiento: " + tareaActual.fechaVencimiento);
+    });
+  }
+
+  prompt("\nPresiona Enter para continuar...");
+}
+
+// Muestra el menú de ordenamiento, pide la opción y reordena la lista global 'tareas'.
+function ordenarTareas(): void {
+  console.clear();
+  let opcionOrden: string = "";
+  let criterio: string = "";
+
+  console.log("--- Ordenar Tareas ---");
+  console.log("¿Por qué atributo deseas ordenar?");
+  console.log("1. Título");
+  console.log("2. Fecha de Vencimiento");
+  console.log("3. Fecha de Creación");
+  console.log("4. Dificultad (fácil, medio, difícil)");
+  console.log("5. Volver");
+  opcionOrden = prompt("Elige una opción: ") || "";
+
+  switch (opcionOrden) {
+    case "1":
+      criterio = "titulo";
+      break;
+    case "2":
+      criterio = "vencimiento";
+      break;
+    case "3":
+      criterio = "creacion";
+      break;
+    case "4":
+      criterio = "dificultad";
+      break;
+    case "5":
+      console.log("Volviendo al menú principal...");
+      prompt("Presiona Enter para continuar...");
+      return; // Salimos de la función sin ordenar ni guardar.
+    default:
+      console.log("Opción no válida.");
+      prompt("Presiona Enter para continuar...");
+      return;
+  }
+
+  // 1. Llamada a la función pura: Obtenemos la nueva lista ordenada.
+  const tareasOrdenadas = ordenarTareasPura(tareas, criterio);
+  
+  // 2. Actualizamos el estado global: La lista global 'tareas' ahora contiene el orden nuevo.
+  tareas = tareasOrdenadas;
+
+  // 3. Persistencia: Guardamos los cambios en el archivo.
+  guardarTareasEnArchivo(RUTA_ARCHIVO, tareas); 
+
+  console.clear();
+  console.log(`\n✅ ¡Tareas ordenadas por ${criterio} con éxito!`);
+  
+  // Mostramos el resumen de las tareas ordenadas para confirmación.
+  const visiblesOrdenadas = obtenerTareasVisibles(tareas);
+  if (visiblesOrdenadas.length > 0) {
+      visiblesOrdenadas.forEach(function (tareaActual, indice) {
+          console.log(`\n--- Tarea ${indice + 1} ---`);
+          console.log("ID: " + tareaActual.id);
+          console.log("Título: " + tareaActual.titulo);
+          console.log("Estado: " + tareaActual.estado);
+      });
+  }
+
+
+  prompt("\nPresiona Enter para continuar...");
+}
+
+// Muestra las estadísticas de las tareas
+function mostrarEstadisticas(): void {
+  console.clear();
+  console.log("--- Resumen y Estadísticas de Tareas ---");
+
+  // 1. Llamada a la función pura para obtener los datos
+  const stats = obtenerEstadisticasPura(tareas);
+
+  // 2. Mostrar los resultados
+  console.log(`\n✅ Total de Tareas Visibles: ${stats.totalVisibles}`);
+  console.log("\n-------------------------------------------");
+  console.log("📊 Distribución por Estado:");
+  console.log("-------------------------------------------");
+  for (const estado in stats.porEstado) {
+    const data = stats.porEstado[estado];
+    // Se muestran la cantidad y el porcentaje
+    console.log(`- ${estado}: ${data.cantidad} tareas (${data.porcentaje})`);
+  }
+  
+  console.log("\n-------------------------------------------");
+  console.log("🧠 Distribución por Dificultad:");
+  console.log("-------------------------------------------");
+  for (const dificultad in stats.porDificultad) {
+    const data = stats.porDificultad[dificultad];
+    // Se muestran la cantidad y el porcentaje
+    console.log(`- ${dificultad.charAt(0).toUpperCase() + dificultad.slice(1)}: ${data.cantidad} tareas (${data.porcentaje})`);
+  }
+
+  prompt("\nPresiona Enter para continuar...");
+}
+
+// Muestra el menú de consultas y los resultados de la función pura elegida.
+function mostrarConsultas(): void {
+  console.clear();
+  let subOpcion: string | undefined;
+
+  console.log("--- Consultas Especializadas ---");
+  console.log("1. Tareas de Prioridad Alta (Dificultad Difícil)");
+  console.log("2. Tareas Vencidas");
+  console.log("3. Tareas Relacionadas (Buscar por ID)");
+  console.log("4. Volver");
+  subOpcion = prompt("Elige una opción: ") || "";
+
+  let resultados: Tarea[] = [];
+  let mensaje: string = "";
+
+  switch (subOpcion) {
+    case "1":
+      resultados = obtenerTareasPrioridadAlta(tareas);
+      mensaje = "Tareas de Prioridad Alta";
+      break;
+
+    case "2":
+      resultados = obtenerTareasVencidas(tareas);
+      mensaje = "Tareas Vencidas";
+      break;
+
+    case "3":
+      let idStr = prompt("Ingresa el ID de la tarea base para buscar relacionadas: ") || "";
+      const idNum = parseInt(idStr);
+
+      if (isNaN(idNum)) {
+        console.log("\nID inválido.");
+        prompt("Presiona Enter para continuar...");
+        return;
+      }
+      resultados = obtenerTareasRelacionadas(tareas, idNum);
+      mensaje = `Tareas Relacionadas con ID: ${idNum}`;
+      break;
+
+    case "4":
+      console.log("Volviendo...");
+      return;
+
+    default:
+      console.log("Opción no válida.");
+      prompt("Presiona Enter para continuar...");
+      return;
+  }
+
+  // Lógica de visualización de los resultados
+  console.clear();
+  console.log(`\n--- Resultados: ${mensaje} ---`);
+
+  if (resultados.length === 0) {
+    console.log("No se encontraron tareas que coincidan con la consulta.");
+  } else {
+    resultados.forEach(function (tareaActual, indice) {
+      console.log(`\n--- Coincidencia ${indice + 1} ---`);
+      console.log("ID: " + tareaActual.id);
+      console.log("Título: " + tareaActual.titulo);
+      console.log("Estado: " + tareaActual.estado);
+      console.log("Dificultad: " + tareaActual.dificultad);
+      if (tareaActual.fechaVencimiento) {
+        console.log("Vencimiento: " + tareaActual.fechaVencimiento);
+      }
     });
   }
 
