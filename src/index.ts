@@ -1,4 +1,4 @@
-// Importamos la librería para pedirle datos al usuario en la consola.
+// Importamos la librería para pedirle datos al usuario en la consola. 
 import promptSync from "prompt-sync";
 // Importamos la librería 'fs' (File System) de Node.js para para guardar y leer nuestras tareas.
 import * as fs from "fs";
@@ -26,6 +26,7 @@ interface Tarea {
   fechaVencimiento: string; // Cuándo debe estar lista (opcional).
   dificultad: string; // Qué tan difícil es ('fácil', 'medio', 'difícil').
   eliminado: boolean; // Usamos 'eliminado' para dejar de mostrar la tarea (soft delete).
+  ultimaEdicion: string; // Nueva: fecha de la última edición (si nunca se editó, igual a fechaCreacion).
 }
 
 // Aquí guardaremos todas las tareas.
@@ -56,7 +57,7 @@ function leerTareasDesdeArchivo(ruta: string): Tarea[] {
     return [];
   } catch (error) {
     // Si algo sale mal al leer, muestra un error en la consola.
-    console.log("Error leyendo archivo de tareas: " + (error as Error).message);
+    console.log("Error leyendo archivo de tareas: " + (error as Error).message + " ");
     return [];
   }
 }
@@ -67,7 +68,7 @@ function guardarTareasEnArchivo(ruta: string, listaTareas: Tarea[]): void {
     const texto = JSON.stringify(listaTareas, null, 2); // Convierte la lista de tareas de JavaScript a un texto en formato JSON, con un formato legible (2 espacios).
     fs.writeFileSync(ruta, texto, { encoding: "utf8" }); // Escribe el texto JSON en el archivo.
   } catch (error) {
-    console.log("Error escribiendo archivo de tareas: " + (error as Error).message);   // Si algo sale mal al escribir, muestra un error.
+    console.log("Error escribiendo archivo de tareas: " + (error as Error).message + " ");   // Si algo sale mal al escribir, muestra un error.
   }
 }
 
@@ -216,6 +217,7 @@ function crearTareaPura(
     fechaVencimiento: fechaVencimiento,
     dificultad: dificultad,
     eliminado: false, // Por defecto, una tarea nueva no está eliminada.
+    ultimaEdicion: fechaCreacion // Nueva: al crear, la última edición es la fecha de creación.
   };
 }
 
@@ -235,6 +237,7 @@ function eliminarTareaPorId(listaTareas: Tarea[], idEliminar: number): Tarea[] {
         fechaVencimiento: t.fechaVencimiento,
         dificultad: t.dificultad,
         eliminado: true, // ¡Aquí está el cambio!
+        ultimaEdicion: t.ultimaEdicion
       };
     }
     // Si no es la tarea que buscamos, la devolvemos sin cambios.
@@ -305,6 +308,40 @@ function obtenerTareasRelacionadas(listaTareas: Tarea[], tareaBaseId: number): T
   });
 }
 
+// --- NUEVAS FUNCIONES PURAS (ayudan a mostrar/editar sin mutar) ---
+
+// Traduce la dificultad a una cadena decorativa (ej: ★★☆)
+function obtenerDecoracionDificultad(dificultad: string): string {
+  const key = dificultad ? dificultad.toLowerCase() : "";
+  const mapa: { [key: string]: string } = {
+    'fácil': '★☆☆',
+    'facil': '★☆☆',
+    'medio': '★★☆',
+    'difícil': '★★★',
+    'dificil': '★★★'
+  };
+  return mapa[key] || dificultad;
+}
+
+// Función pura para editar una tarea por ID: devuelve una NUEVA lista con los cambios aplicados.
+function editarTareaPorId(listaTareas: Tarea[], idEditar: number, cambios: Partial<Tarea>, fechaEdicion: string): Tarea[] {
+  return listaTareas.map(function (t) {
+    if (t.id === idEditar) {
+      return {
+        id: t.id,
+        titulo: cambios.titulo !== undefined ? cambios.titulo : t.titulo,
+        descripcion: cambios.descripcion !== undefined ? cambios.descripcion : t.descripcion,
+        estado: cambios.estado !== undefined ? cambios.estado : t.estado,
+        fechaCreacion: t.fechaCreacion,
+        fechaVencimiento: cambios.fechaVencimiento !== undefined ? cambios.fechaVencimiento : t.fechaVencimiento,
+        dificultad: cambios.dificultad !== undefined ? cambios.dificultad : t.dificultad,
+        eliminado: t.eliminado,
+        ultimaEdicion: fechaEdicion // actualizamos la última edición con la fecha provista
+      };
+    }
+    return t;
+  });
+}
 
 // --- EL MENÚ PRINCIPAL DEL PROGRAMA (ES IMPURA, porque interactúa con el usuario) ---
 
@@ -324,6 +361,7 @@ do {
   console.log("7.Ordenar Tareas\n")
   console.log("8.Ver Estadísticas\n");
   console.log("9.Consultas/Inferencia\n");
+  console.log("10.Editar tarea\n");
 
   // Pide al usuario que elija una opción.
   opcion = prompt("Elige una opción: ") || "";
@@ -396,15 +434,15 @@ do {
           return t.id === idNum;
         });
         if (!tareaEncontrada) {
-          console.log("No existe ninguna tarea con ID " + idNum + "."); // Si no se encuentra, mostramos un mensaje.
+          console.log("No existe ninguna tarea con ID " + idNum + " " + ".");
         } else if (tareaEncontrada.eliminado) {
-          console.log("La tarea con ID " + idNum + " ya está eliminada."); // Si ya estaba eliminada, también avisamos.
+          console.log("La tarea con ID " + idNum + " " + " ya está eliminada.");
         } else {
           tareas = eliminarTareaPorId(tareas, idNum); // Si existe y no está eliminada: Usamos la función pura 'eliminarTareaPorId' para marcarla como eliminada.
           numTareas = tareas.length; // Actualizamos el contador
           guardarTareasEnArchivo(RUTA_ARCHIVO, tareas); // Guardamos el cambio en el archivo.
 
-          console.log("Tarea con ID " + idNum + " marcada como eliminada.");
+          console.log("Tarea con ID " + idNum + " " + " marcada como eliminada.");
         }
       }
       prompt("\nPresiona Enter para continuar...");
@@ -420,6 +458,10 @@ do {
 
       case "9":
       mostrarConsultas();
+      break;
+
+      case "10":
+      editarTarea();
       break;
 
     default:
@@ -458,16 +500,21 @@ function verTareas(): void {
       if (visibles.length === 0) {
         console.log("No tienes tareas agregadas.");
       } else {
+        // Ordenamos por fecha de creación ascendente antes de mostrar
+        const ordenadas = ordenarTareasPura(visibles, "creacion");
         // Recorremos la lista de tareas visibles y mostramos todos sus detalles.
-        visibles.forEach(function (tareaActual, indice) {
-          console.log("\n--- Tarea " + (indice + 1) + " ---");
-          console.log("ID: " + tareaActual.id);
-          console.log("Título: " + tareaActual.titulo);
-          console.log("Descripción: " + tareaActual.descripcion);
-          console.log("Estado: " + tareaActual.estado);
-          console.log("Dificultad: " + tareaActual.dificultad);
-          console.log("Fecha de Creación: " + tareaActual.fechaCreacion);
-          console.log("Fecha de Vencimiento: " + tareaActual.fechaVencimiento);
+        ordenadas.forEach(function (tareaActual, indice) {
+          console.log("\n--- Tarea " + (indice + 1) + " " + " ---");
+          console.log("ID: " + tareaActual.id + " ");
+          console.log("Título: " + tareaActual.titulo + " ");
+          console.log("Descripción: " + tareaActual.descripcion + " ");
+          console.log("Estado: " + tareaActual.estado + " ");
+          // Mostramos la dificultad decorada
+          const decoracion = obtenerDecoracionDificultad(tareaActual.dificultad);
+          console.log("Dificultad: " + decoracion + " (" + tareaActual.dificultad + ") " );
+          console.log("Fecha de Creación: " + tareaActual.fechaCreacion + " ");
+          console.log("Fecha de Vencimiento: " + tareaActual.fechaVencimiento + " ");
+          console.log("Última Edición: " + tareaActual.ultimaEdicion + " ");
         });
       }
       break;
@@ -483,10 +530,10 @@ function verTareas(): void {
       } else {
         // Mostramos un resumen de las tareas pendientes.
         pendientes.forEach(function (tareaActual, indice) {
-          console.log("\n--- Tarea " + (indice + 1) + " ---");
-          console.log("ID: " + tareaActual.id);
-          console.log("Título: " + tareaActual.titulo);
-          console.log("Estado: " + tareaActual.estado);
+          console.log("\n--- Tarea " + (indice + 1) + " " + " ---");
+          console.log("ID: " + tareaActual.id + " ");
+          console.log("Título: " + tareaActual.titulo + " ");
+          console.log("Estado: " + tareaActual.estado + " ");
         });
       }
       break;
@@ -503,10 +550,10 @@ function verTareas(): void {
       } else {
         // Mostramos un resumen de las tareas terminadas.
         terminadas.forEach(function (tareaActual, indice) {
-          console.log("\n--- Tarea " + (indice + 1) + " ---");
-          console.log("ID: " + tareaActual.id);
-          console.log("Título: " + tareaActual.titulo);
-          console.log("Estado: " + tareaActual.estado);
+          console.log("\n--- Tarea " + (indice + 1) + " " + " ---");
+          console.log("ID: " + tareaActual.id + " ");
+          console.log("Título: " + tareaActual.titulo + " ");
+          console.log("Estado: " + tareaActual.estado + " ");
         });
       }
       break;
@@ -523,10 +570,10 @@ function verTareas(): void {
       } else {
         // Mostramos un resumen de las tareas en curso.
         enCurso.forEach(function (tareaActual, indice) {
-          console.log("\n--- Tarea " + (indice + 1) + " ---");
-          console.log("ID: " + tareaActual.id);
-          console.log("Título: " + tareaActual.titulo);
-          console.log("Estado: " + tareaActual.estado);
+          console.log("\n--- Tarea " + (indice + 1) + " " + " ---");
+          console.log("ID: " + tareaActual.id + " ");
+          console.log("Título: " + tareaActual.titulo + " ");
+          console.log("Estado: " + tareaActual.estado + " ");
         });
       }
       break;
@@ -550,7 +597,7 @@ function mostrarDetalles(): void {
   let estadoBuscado = prompt("Ingresa el estado de la tarea que quieres ver (Pendiente, Terminada, En Curso): ") || "";
   let contador = 0;
 
-  console.log("\nMostrando detalles de tareas: " + estadoBuscado);
+  console.log("\nMostrando detalles de tareas: " + estadoBuscado + " ");
 
   // Obtenemos las tareas que no están eliminadas.
   const visibles = obtenerTareasVisibles(tareas);
@@ -561,14 +608,16 @@ function mostrarDetalles(): void {
 
   // Recorremos y mostramos todos los detalles de cada tarea encontrada.
   coincidentes.forEach(function (tareaActual, indice) {
-    console.log("\n--- Tarea " + (indice + 1) + " ---");
-    console.log("ID: " + tareaActual.id);
-    console.log("Título: " + tareaActual.titulo);
-    console.log("Descripción: " + tareaActual.descripcion);
-    console.log("Estado: " + tareaActual.estado);
-    console.log("Dificultad: " + tareaActual.dificultad);
-    console.log("Fecha de Creación: " + tareaActual.fechaCreacion);
-    console.log("Fecha de Vencimiento: " + tareaActual.fechaVencimiento);
+    console.log("\n--- Tarea " + (indice + 1) + " " + " ---");
+    console.log("ID: " + tareaActual.id + " ");
+    console.log("Título: " + tareaActual.titulo + " ");
+    console.log("Descripción: " + tareaActual.descripcion + " ");
+    console.log("Estado: " + tareaActual.estado + " ");
+    // mostramos dificultad decorada
+    console.log("Dificultad: " + obtenerDecoracionDificultad(tareaActual.dificultad) + " (" + tareaActual.dificultad + ") " );
+    console.log("Fecha de Creación: " + tareaActual.fechaCreacion + " ");
+    console.log("Fecha de Vencimiento: " + tareaActual.fechaVencimiento + " ");
+    console.log("Última Edición: " + tareaActual.ultimaEdicion + " ");
     contador++;
   });
 
@@ -601,18 +650,19 @@ function buscarTarea(): void {
 
   if (resultados.length === 0) {
     // Si no encontramos nada.
-    console.log("\nNo se encontraron tareas que coincidan con: " + terminoBusqueda);
+    console.log("\nNo se encontraron tareas que coincidan con: " + terminoBusqueda + " ");
   } else {
     // Si encontramos resultados, mostramos todos los detalles de las tareas.
     resultados.forEach(function (tareaActual, indice) {
-      console.log("\n--- Coincidencia Encontrada (Tarea " + (indice + 1) + ") ---");
-      console.log("ID: " + tareaActual.id);
-      console.log("Título: " + tareaActual.titulo);
-      console.log("Descripción: " + tareaActual.descripcion);
-      console.log("Estado: " + tareaActual.estado);
-      console.log("Dificultad: " + tareaActual.dificultad);
-      console.log("Fecha de Creación: " + tareaActual.fechaCreacion);
-      console.log("Fecha de Vencimiento: " + tareaActual.fechaVencimiento);
+      console.log("\n--- Coincidencia Encontrada (Tarea " + (indice + 1) + " " + ") ---");
+      console.log("ID: " + tareaActual.id + " ");
+      console.log("Título: " + tareaActual.titulo + " ");
+      console.log("Descripción: " + tareaActual.descripcion + " ");
+      console.log("Estado: " + tareaActual.estado + " ");
+      console.log("Dificultad: " + tareaActual.dificultad + " ");
+      console.log("Fecha de Creación: " + tareaActual.fechaCreacion + " ");
+      console.log("Fecha de Vencimiento: " + tareaActual.fechaVencimiento + " ");
+      console.log("Última Edición: " + tareaActual.ultimaEdicion + " ");
     });
   }
 
@@ -667,16 +717,16 @@ function ordenarTareas(): void {
   guardarTareasEnArchivo(RUTA_ARCHIVO, tareas); 
 
   console.clear();
-  console.log(`\n✅ ¡Tareas ordenadas por ${criterio} con éxito!`);
+  console.log("\n✅ ¡Tareas ordenadas por " + criterio + " " + " con éxito!");
   
   // Mostramos el resumen de las tareas ordenadas para confirmación.
   const visiblesOrdenadas = obtenerTareasVisibles(tareas);
   if (visiblesOrdenadas.length > 0) {
       visiblesOrdenadas.forEach(function (tareaActual, indice) {
-          console.log(`\n--- Tarea ${indice + 1} ---`);
-          console.log("ID: " + tareaActual.id);
-          console.log("Título: " + tareaActual.titulo);
-          console.log("Estado: " + tareaActual.estado);
+          console.log("\n--- Tarea " + (indice + 1) + " " + " ---");
+          console.log("ID: " + tareaActual.id + " ");
+          console.log("Título: " + tareaActual.titulo + " ");
+          console.log("Estado: " + tareaActual.estado + " ");
       });
   }
 
@@ -693,23 +743,23 @@ function mostrarEstadisticas(): void {
   const stats = obtenerEstadisticasPura(tareas);
 
   // 2. Mostrar los resultados
-  console.log(`\n✅ Total de Tareas Visibles: ${stats.totalVisibles}`);
+  console.log("\n✅ Total de Tareas Visibles: " + stats.totalVisibles + " ");
   console.log("\n-------------------------------------------");
   console.log("📊 Distribución por Estado:");
   console.log("-------------------------------------------");
   for (const estado in stats.porEstado) {
     const data = stats.porEstado[estado];
     // Se muestran la cantidad y el porcentaje
-    console.log(`- ${estado}: ${data.cantidad} tareas (${data.porcentaje})`);
+    console.log("- " + estado + ": " + data.cantidad + " " + "tareas (" + data.porcentaje + ")");
   }
   
   console.log("\n-------------------------------------------");
-  console.log("🧠 Distribución por Dificultad:");
+  console.log(" Distribución por Dificultad:");
   console.log("-------------------------------------------");
   for (const dificultad in stats.porDificultad) {
     const data = stats.porDificultad[dificultad];
     // Se muestran la cantidad y el porcentaje
-    console.log(`- ${dificultad.charAt(0).toUpperCase() + dificultad.slice(1)}: ${data.cantidad} tareas (${data.porcentaje})`);
+    console.log("- " + (dificultad.charAt(0).toUpperCase() + dificultad.slice(1)) + ": " + data.cantidad + " " + "tareas (" + data.porcentaje + ")");
   }
 
   prompt("\nPresiona Enter para continuar...");
@@ -751,7 +801,7 @@ function mostrarConsultas(): void {
         return;
       }
       resultados = obtenerTareasRelacionadas(tareas, idNum);
-      mensaje = `Tareas Relacionadas con ID: ${idNum}`;
+      mensaje = "Tareas Relacionadas con ID: " + idNum + " ";
       break;
 
     case "4":
@@ -766,22 +816,64 @@ function mostrarConsultas(): void {
 
   // Lógica de visualización de los resultados
   console.clear();
-  console.log(`\n--- Resultados: ${mensaje} ---`);
+  console.log("\n--- Resultados: " + mensaje + " ---");
 
   if (resultados.length === 0) {
     console.log("No se encontraron tareas que coincidan con la consulta.");
   } else {
     resultados.forEach(function (tareaActual, indice) {
-      console.log(`\n--- Coincidencia ${indice + 1} ---`);
-      console.log("ID: " + tareaActual.id);
-      console.log("Título: " + tareaActual.titulo);
-      console.log("Estado: " + tareaActual.estado);
-      console.log("Dificultad: " + tareaActual.dificultad);
+      console.log("\n--- Coincidencia " + (indice + 1) + " " + " ---");
+      console.log("ID: " + tareaActual.id + " ");
+      console.log("Título: " + tareaActual.titulo + " ");
+      console.log("Estado: " + tareaActual.estado + " ");
+      console.log("Dificultad: " + tareaActual.dificultad + " ");
       if (tareaActual.fechaVencimiento) {
-        console.log("Vencimiento: " + tareaActual.fechaVencimiento);
+        console.log("Vencimiento: " + tareaActual.fechaVencimiento + " ");
       }
     });
   }
 
   prompt("\nPresiona Enter para continuar...");
+}
+
+// --- NUEVAS FUNCIONES IMPURAS (envoltorio para edición con prompts y persistencia) ---
+
+function editarTarea(): void {
+  console.clear();
+  console.log("--- Editar Tarea ---");
+  const idStr = prompt("Ingresa el ID numérico de la tarea a editar: ") || "";
+  const idNum = parseInt(idStr);
+  if (isNaN(idNum)) {
+    console.log("ID inválido.");
+    prompt("Presiona Enter para continuar...");
+    return;
+  }
+
+  const tareaEncontrada = tareas.find(function (t) { return t.id === idNum; });
+  if (!tareaEncontrada) {
+    console.log("No existe ninguna tarea con ID " + idNum + " " + ".");
+    prompt("Presiona Enter para continuar...");
+    return;
+  }
+
+  // Pedimos nuevos valores (enter para mantener el actual)
+  const nuevoTitulo = prompt("Nuevo título (enter para mantener): ") || "";
+  const nuevaDescripcion = prompt("Nueva descripción (enter para mantener): ") || "";
+  const nuevoEstado = prompt("Nuevo estado (En curso, Pendiente, Terminada) (enter para mantener): ") || "";
+  const nuevoVencimiento = prompt("Nueva fecha de vencimiento (opcional) (enter para mantener): ") || "";
+  const nuevaDificultad = prompt("Nueva dificultad (fácil, medio, difícil) (enter para mantener): ") || "";
+
+  const cambios: Partial<Tarea> = {};
+  if (nuevoTitulo !== "") cambios.titulo = nuevoTitulo;
+  if (nuevaDescripcion !== "") cambios.descripcion = nuevaDescripcion;
+  if (nuevoEstado !== "") cambios.estado = nuevoEstado;
+  if (nuevoVencimiento !== "") cambios.fechaVencimiento = nuevoVencimiento;
+  if (nuevaDificultad !== "") cambios.dificultad = nuevaDificultad;
+
+  const fechaEdicion = new Date().toLocaleString();
+  tareas = editarTareaPorId(tareas, idNum, cambios, fechaEdicion); // llamada a la función pura
+  guardarTareasEnArchivo(RUTA_ARCHIVO, tareas);
+
+  console.log("Tarea con ID " + idNum + " " + " editada con éxito. Última Edición: " + fechaEdicion + " ");
+  prompt("Presiona Enter para continuar...");
 }
